@@ -1,0 +1,19 @@
+[package]
+name = "crypto_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "crypto_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+aes-gcm = { version = "0.10.3", features = ["aes", "alloc"] }
+rand = "0.8"
+zeroize = { version = "1.7", features = ["derive"] }
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+strip = true 

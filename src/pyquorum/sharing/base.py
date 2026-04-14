@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from ..exсeptions import ThresholdError
+from ..exceptions import ThresholdError
 
 
 class Scheme(ABC):

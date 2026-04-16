@@ -4,12 +4,14 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pdb
 dist/
 *.egg-info/
 .pytest_cache
 
 # Rust
 target/
+
 
 # Coverage
 .coverage

@@ -224,7 +224,7 @@ fn combine_shares(py: Python<'_>, shares: Vec<String>, k: usize) -> PyResult<PyO
 }
 
 #[pymodule]
-fn crypto_core(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn pyquorum_core(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_key, m)?)?;
     m.add_function(wrap_pyfunction!(split_secret, m)?)?;
     m.add_function(wrap_pyfunction!(combine_shares, m)?)?;

@@ -1,10 +1,10 @@
 [package]
-name = "crypto_core"
+name = "pyquorum_core"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "crypto_core"
+name = "pyquorum_core"
 crate-type = ["cdylib"]
 
 [dependencies]

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pyquorum"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cryptographic library for secret sharing and key management, powered by Rust"
 authors = [
     {name = "svvqt", email = "kon.vitkovskii@gmail.com"}

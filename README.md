@@ -24,11 +24,13 @@ This library does:
 - generate key
 - split secret
 - combine secret
+
 What it doesn't:
 - replace encryption packages like cryptography, pyserpent and etc
+
 If you found a security issue, please refer to [SECURITY.md](SECURITY.md)
 
-## Roadmap to 1.0.0
+## Roadmap to v1.0.0
 - [x] - Shamir Scheme
 - [ ] - Blakley Scheme
 - [ ] - Additive Scheme

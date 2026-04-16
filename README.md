@@ -43,14 +43,19 @@ If you find this package usefull, you can star repo on github
 ### Shamir Scheme Share
 
 How to split a secret key
+
 ![Shamir split diagram](docs/shamir1.png)
 
 How to combine a secret key
+
 ![Shamir combine diagram](docs/shamir2.png)
 
 ### Example
 
-![alt-text](docs/shamir_example1.png)
-![alt-text](docs/shamir_example2.png)
-![alt-text](docs/shamir_example3.png)
-![alt-text](docs/shamir_example4.png)
+![Source secret key](docs/shamir_example1.png)
+
+![Spliting secret key to 5 shares](docs/shamir_example2.png)
+
+![Combining 3 shares to secret key](docs/shamir_example3.png)
+
+![Result](docs/shamir_example4.png)

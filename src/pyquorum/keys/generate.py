@@ -1,4 +1,4 @@
-import crypto_core
+import pyquorum
 from ..exceptions import GenerateKeyError
 
 def generate_key() -> bytes:
@@ -10,6 +10,6 @@ def generate_key() -> bytes:
         32 byte generated key
     """
     try:
-        return crypto_core.generate_key()
+        return pyquorum.generate_key()
     except ValueError as e:
         raise GenerateKeyError(str(e))

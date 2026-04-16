@@ -23,6 +23,8 @@ readme = "README.md"
 Repository = "https://github.com/svvqt/pyquorum"
 
 [tool.maturin]
+python-source = "src"
+module-name = "pyquorum.crypto_core"
 python-package = ["pyquorum"]
 manifest-path = "src/rust/Cargo.toml"
 

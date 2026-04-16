@@ -1,4 +1,4 @@
-import crypto_core
+import pyquorum
 from .base import Scheme
 from ..exceptions import InvalidKeyError, InvalidShareError
 
@@ -40,7 +40,7 @@ class ShamirScheme(Scheme):
             raise InvalidKeyError(f"Key length must be 32, not {len(key)}")
 
         try:
-            return crypto_core.split_secret(key, self.k, self.n)
+            return pyquorum.split_secret(key, self.k, self.n)
         except ValueError as e:
             raise InvalidKeyError(str(e))
 
@@ -71,12 +71,6 @@ class ShamirScheme(Scheme):
             raise InvalidShareError(f"Need at least {self.k} shares")
 
         try:
-            return crypto_core.combine_shares(shares, self.k)
+            return pyquorum.combine_shares(shares, self.k)
         except ValueError as e:
             raise InvalidShareError(str(e))
-
-if __name__ == "__main__":
-    key = b"12312421412234567123456789123456"
-    shares = shamir_split(key)
-    print(shares)
-    print(shamir_combine(shares))

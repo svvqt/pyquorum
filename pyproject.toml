@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "pyquorum"
+version = "0.1.0"
+description = "Cryptographic library for secret sharing and key management, powered by Rust"
+authors = [
+    {name = "svvqt", email = "kon.vitkovskii@gmail.com"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = []
+requires-python = ">=3.9"
+license = {text = "MIT"}
+readme = "README.md"
+
+[project.urls]
+Repository = "https://github.com/svvqt/pyquorum"
+
+[tool.maturin]
+python-package = ["pyquorum"]
+manifest-path = "src/rust/Cargo.toml"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

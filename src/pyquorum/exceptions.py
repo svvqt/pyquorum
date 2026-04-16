@@ -14,3 +14,6 @@ class ThresholdError(PyQuorumError):
         self.n = n
     def __str__(self):
         return f"K must be less then N, now k={self.k}, n={self.n}"
+    
+class GenerateKeyError(PyQuorumError):
+    pass

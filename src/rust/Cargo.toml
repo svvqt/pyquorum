@@ -8,8 +8,7 @@ name = "pyquorum_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20", features = ["extension-module"] }
-aes-gcm = { version = "0.10.3", features = ["aes", "alloc"] }
+pyo3 = { version = "0.28.3", features = ["extension-module", "abi3-py39"] }
 rand = "0.8"
 zeroize = { version = "1.7", features = ["derive"] }
 sha2 = "0.10"

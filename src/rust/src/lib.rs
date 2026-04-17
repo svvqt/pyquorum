@@ -1,36 +1,36 @@
-/*!
- * crypto-core — Rust/PyO3
- *
- * Shamir's Secret Sharing (2-of-3) в поле GF(p), p = 2^127 - 1
- * Zeroize: чувствительные структуры обнуляются при drop()
- *
- * Ключ (32 байта = 4 × u64) — каждый u64 << PRIME, что гарантирует
- * корректную работу арифметики поля без потери данных.
- */
-
 use pyo3::exceptions::PyValueError;
-use rand::rngs::OsRng;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use rand::rngs::OsRng;
 use rand::RngCore;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // ── Константы ─────────────────────────────────────────────────────────────
 
-/// Простое число Мерсенна: 2^127 - 1
 const PRIME: u128 = (1u128 << 127) - 1;
-
-const NONCE_LEN: usize = 12;
-const KEY_LEN: usize = 32; // 256 бит = 4 × u64
+const KEY_LEN: usize = 32;
 
 // ── Защищённый тип ────────────────────────────────────────────────────────
 
 #[derive(Zeroize, ZeroizeOnDrop, Clone)]
 struct SecretKey([u8; KEY_LEN]);
 
-// ── Арифметика GF(p) ──────────────────────────────────────────────────────
+// ── Арифметика GF(p) (без изменений) ──────────────────────────────────────
 
-/// Быстрое возведение в степень по модулю
+fn mul_mod(a: u128, b: u128, m: u128) -> u128 {
+    let mut result = 0u128;
+    let mut base = a % m;
+    let mut exp = b;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            result = (result + base) % m;
+        }
+        base = (base << 1) % m;
+        exp >>= 1;
+    }
+    result
+}
+
 fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
     let mut result = 1u128;
     base %= modulus;
@@ -44,68 +44,40 @@ fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
     result
 }
 
-/// Умножение по модулю через Russian Peasant (без переполнения u128).
-/// a, b < PRIME < 2^127, поэтому a + a < 2^128 — безопасно.
-fn mul_mod(a: u128, b: u128, m: u128) -> u128 {
-    let mut result = 0u128;
-    let mut base = a % m;
-    let mut exp = b;
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = (result + base) % m;
-        }
-        // base * 2: base < m < 2^127, поэтому base*2 < 2^128 — не переполняется
-        base = (base << 1) % m;
-        exp >>= 1;
-    }
-    result
-}
-
-/// Модульный обратный через малую теорему Ферма
 fn mod_inv(a: u128, p: u128) -> u128 {
     mod_pow(a, p - 2, p)
 }
 
-// ── Shamir's Secret Sharing ────────────────────────────────────────────────
-//
-// 32-байтный ключ разбивается на 4 × u64 (a, b, c, d).
-// Каждый u64 < 2^64 << PRIME (2^127-1) — гарантированно в поле GF(p).
-// Для каждого из 4 компонентов строится независимый полином степени 1.
-// Share format: "index:a_hex:b_hex:c_hex:d_hex"
+// ── Shamir's Secret Sharing (внутренняя логика сохранена) ──────────────────
 
-/// Разделяет секрет на n частей, восстановимых по любым k из них.
-/// Полином степени (k-1): f(x) = s + c1*x + c2*x^2 + ... + c_{k-1}*x^{k-1}
 fn shamir_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<Vec<String>, String> {
-    if k < 2 {
-        return Err("k must be >= 2".into());
-    }
-    if n < k {
-        return Err("n must be >= k".into());
+    if k < 2 || n < k {
+        return Err("Invalid k/n parameters".into());
     }
 
-    let a = u64::from_be_bytes(secret[0..8].try_into().unwrap()) as u128;
-    let b = u64::from_be_bytes(secret[8..16].try_into().unwrap()) as u128;
-    let c = u64::from_be_bytes(secret[16..24].try_into().unwrap()) as u128;
-    let d = u64::from_be_bytes(secret[24..32].try_into().unwrap()) as u128;
+    let secrets = [
+        u64::from_be_bytes(secret[0..8].try_into().unwrap()) as u128,
+        u64::from_be_bytes(secret[8..16].try_into().unwrap()) as u128,
+        u64::from_be_bytes(secret[16..24].try_into().unwrap()) as u128,
+        u64::from_be_bytes(secret[24..32].try_into().unwrap()) as u128,
+    ];
 
     let mut rng = OsRng;
-
-    let rand_coeff = |rng: &mut OsRng| -> u128 {
+    let mut rand_coeff = || {
         let lo = rng.next_u64() as u128;
         let hi = (rng.next_u64() as u128) & 0x7FFF_FFFF_FFFF_FFFF;
         (hi << 64 | lo) % PRIME
     };
 
-    let secrets = [a, b, c, d];
     let coeffs: Vec<Vec<u128>> = secrets
         .iter()
-        .map(|_| (0..k - 1).map(|_| rand_coeff(&mut rng)).collect())
+        .map(|_| (0..k - 1).map(|_| rand_coeff()).collect())
         .collect();
 
-    let eval_poly = |s: u128, coeffs: &[u128], x: u128| -> u128 {
+    let eval_poly = |s: u128, c_list: &[u128], x: u128| -> u128 {
         let mut result = s;
         let mut x_pow = x;
-        for &c in coeffs {
+        for &c in c_list {
             result = (result + mul_mod(c, x_pow, PRIME)) % PRIME;
             x_pow = mul_mod(x_pow, x, PRIME);
         }
@@ -114,28 +86,27 @@ fn shamir_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<V
 
     let shares = (1..=n as u128)
         .map(|x| {
-            let fa = eval_poly(secrets[0], &coeffs[0], x);
-            let fb = eval_poly(secrets[1], &coeffs[1], x);
-            let fc = eval_poly(secrets[2], &coeffs[2], x);
-            let fd = eval_poly(secrets[3], &coeffs[3], x);
-            format!("{x}:{fa:032x}:{fb:032x}:{fc:032x}:{fd:032x}")
+            let res: Vec<String> = secrets
+                .iter()
+                .zip(&coeffs)
+                .map(|(&s, c)| format!("{:032x}", eval_poly(s, c, x)))
+                .collect();
+            format!("{}:{}", x, res.join(":"))
         })
         .collect();
 
     Ok(shares)
 }
 
-/// Восстанавливает секрет из любых k частей через интерполяцию Лагранжа.
 fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, String> {
     if shares.len() < k {
         return Err(format!("Need at least {} shares", k));
     }
 
-    let parse = |s: &str| -> Result<(u128, [u128; 4]), String> {
+    let mut parsed = Vec::with_capacity(k);
+    for s in &shares[..k] {
         let p: Vec<&str> = s.split(':').collect();
-        if p.len() != 5 {
-            return Err(format!("Invalid share format (need 5 fields): {}", s));
-        }
+        if p.len() != 5 { return Err("Invalid format".into()); }
         let idx = p[0].parse::<u128>().map_err(|e| e.to_string())?;
         let vals = [
             u128::from_str_radix(p[1], 16).map_err(|e| e.to_string())?,
@@ -143,88 +114,69 @@ fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, Str
             u128::from_str_radix(p[3], 16).map_err(|e| e.to_string())?,
             u128::from_str_radix(p[4], 16).map_err(|e| e.to_string())?,
         ];
-        Ok((idx, vals))
-    };
+        parsed.push((idx, vals));
+    }
 
-    // Парсим ровно k частей
-    let parsed: Result<Vec<_>, _> = shares[..k].iter().map(|s| parse(s)).collect();
-    let parsed = parsed?;
-
-    // Интерполяция Лагранжа для f(0) по k точкам
-    // f(0) = sum_i( y_i * prod_{j != i}( (0 - x_j) / (x_i - x_j) ) )
-    let lagrange_at_zero = |component: usize| -> u128 {
+    let mut key_bytes = [0u8; KEY_LEN];
+    for comp in 0..4 {
         let mut result = 0u128;
         for i in 0..k {
-            let (xi, yi) = (parsed[i].0, parsed[i].1[component]);
-            let mut num = 1u128;   // числитель произведения
-            let mut den = 1u128;   // знаменатель произведения
+            let (xi, yi) = (parsed[i].0, parsed[i].1[comp]);
+            let (mut num, mut den) = (1u128, 1u128);
             for j in 0..k {
                 if i == j { continue; }
                 let xj = parsed[j].0;
-                // (0 - xj) mod PRIME
-                num = mul_mod(num, PRIME - xj % PRIME, PRIME);
-                // (xi - xj) mod PRIME
+                num = mul_mod(num, PRIME - (xj % PRIME), PRIME);
                 let diff = if xi > xj { xi - xj } else { PRIME - (xj - xi) % PRIME };
                 den = mul_mod(den, diff, PRIME);
             }
             let li = mul_mod(num, mod_inv(den, PRIME), PRIME);
             result = (result + mul_mod(yi, li, PRIME)) % PRIME;
         }
-        result
-    };
+        key_bytes[comp * 8..(comp + 1) * 8].copy_from_slice(&(result as u64).to_be_bytes());
+    }
 
-    let ra = lagrange_at_zero(0);
-    let rb = lagrange_at_zero(1);
-    let rc = lagrange_at_zero(2);
-    let rd = lagrange_at_zero(3);
-
-    let mut key = SecretKey([0u8; KEY_LEN]);
-    key.0[0..8].copy_from_slice(&(ra as u64).to_be_bytes());
-    key.0[8..16].copy_from_slice(&(rb as u64).to_be_bytes());
-    key.0[16..24].copy_from_slice(&(rc as u64).to_be_bytes());
-    key.0[24..32].copy_from_slice(&(rd as u64).to_be_bytes());
-    Ok(key)
+    Ok(SecretKey(key_bytes))
 }
 
+// ── PyO3 bindings (Modern Bound API) ──────────────────────────────────────
 
-// ── PyO3 bindings ─────────────────────────────────────────────────────────
-
-/// Генерирует случайный 256-битный ключ
 #[pyfunction]
-fn generate_key(py: Python<'_>) -> PyObject {
+/// Генерирует случайный 256-битный ключ. Возвращает bytes.
+fn generate_key(py: Python<'_>) -> PyResult<Bound<'_, PyBytes>> {
     let mut key = [0u8; KEY_LEN];
     OsRng.fill_bytes(&mut key);
-    let result = PyBytes::new(py, &key).into();
+    
+    // В 0.28.3 используем просто .new(), он возвращает Bound
+    let result = PyBytes::new(py, &key);
+    
     key.zeroize();
-    result
-}
-
-/// Разбивает 32-байтный секрет на 3 части Шамира (порог 2).
-/// Возвращает список строк "index:a:b:c:d"
-#[pyfunction]
-fn split_secret(secret: &[u8], k: usize, n: usize) -> PyResult<Vec<String>> {
-    if secret.len() != KEY_LEN {
-        return Err(PyValueError::new_err(format!(
-            "Secret must be exactly {} bytes",
-            KEY_LEN
-        )));
-    }
-    let key: [u8; KEY_LEN] = secret.try_into().unwrap();
-    shamir_split_internal(&key, k, n)
-        .map_err(|e| PyValueError::new_err(format!("Shamir split failed: {}", e)))
-}
-
-/// Восстанавливает секрет из 2+ частей. Возвращает bytes (32 байта).
-#[pyfunction]
-fn combine_shares(py: Python<'_>, shares: Vec<String>, k: usize) -> PyResult<PyObject> {
-    let key = shamir_combine_internal(&shares, k)
-        .map_err(|e| PyValueError::new_err(format!("Shamir combine failed: {}", e)))?;
-    let result = PyBytes::new(py, &key.0).into();
     Ok(result)
 }
 
+#[pyfunction]
+/// Разбивает секрет на n частей.
+fn split_secret(secret: &[u8], k: usize, n: usize) -> PyResult<Vec<String>> {
+    let key: [u8; KEY_LEN] = secret
+        .try_into()
+        .map_err(|_| PyValueError::new_err(format!("Secret must be {} bytes", KEY_LEN)))?;
+    
+    shamir_split_internal(&key, k, n)
+        .map_err(|e| PyValueError::new_err(e))
+}
+
+#[pyfunction]
+/// Восстанавливает секрет. Возвращает bytes.
+fn combine_shares<'py>(py: Python<'py>, shares: Vec<String>, k: usize) -> PyResult<Bound<'py, PyBytes>> {
+    let key = shamir_combine_internal(&shares, k)
+        .map_err(|e| PyValueError::new_err(e))?;
+    
+    // Снова используем .new() вместо .new_bound()
+    Ok(PyBytes::new(py, &key.0))
+}
+
 #[pymodule]
-fn pyquorum_core(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn pyquorum_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_key, m)?)?;
     m.add_function(wrap_pyfunction!(split_secret, m)?)?;
     m.add_function(wrap_pyfunction!(combine_shares, m)?)?;

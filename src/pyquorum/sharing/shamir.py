@@ -1,5 +1,6 @@
-from .. import pyquorum_core
+from pyquorum import pyquorum_core
 from .base import Scheme
+from .shares import Shares
 from ..exceptions import InvalidKeyError, InvalidShareError
 
 class ShamirScheme(Scheme):
@@ -14,7 +15,7 @@ class ShamirScheme(Scheme):
     n: int
         total number of shares to generate
     """
-    def split(self, key: bytes) -> list[str]:
+    def split(self, key: bytes) -> Shares:
         """
         method for splitting secret key to number of shares
 
@@ -25,7 +26,7 @@ class ShamirScheme(Scheme):
         
         Returns
         -------
-        shares: list[str]:
+        shares: Shares:
             secret key that splitted on shares 
 
         Raises
@@ -33,18 +34,13 @@ class ShamirScheme(Scheme):
         InvalidKeyError
             If key not bytes or not 32 length
         """
-        if not isinstance(key, bytes):
-            raise InvalidKeyError(f"Key must be bytes, not {type(key)}")
-        
-        if len(key) != 32:
-            raise InvalidKeyError(f"Key length must be 32, not {len(key)}")
-
+        super().split(key)
         try:
-            return pyquorum_core.split_secret(key, self.k, self.n)
+            return Shares(pyquorum_core.shamir_split(key, self.k, self.n))
         except ValueError as e:
             raise InvalidKeyError(str(e))
 
-    def combine(self, shares: list[str]) -> bytes:
+    def combine(self, shares: Shares) -> bytes:
         """
         combine shares to secret key
         
@@ -63,14 +59,8 @@ class ShamirScheme(Scheme):
         InvalidShareError
             If shares not string or less then k
         """
-        for share in shares:
-            if not isinstance(share, str):
-                raise InvalidShareError(f"Share must be String, not {type(share)}")
-
-        if len(shares) < self.k:
-            raise InvalidShareError(f"Need at least {self.k} shares")
-
+        super().combine(shares)
         try:
-            return pyquorum_core.combine_shares(shares, self.k)
+            return pyquorum_core.shamir_combine(shares.to_raw(), self.k)
         except ValueError as e:
             raise InvalidShareError(str(e))

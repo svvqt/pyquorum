@@ -1,4 +1,4 @@
-from .. import pyquorum_core
+from pyquorum import pyquorum_core
 from ..exceptions import GenerateKeyError
 
 def generate_key() -> bytes:

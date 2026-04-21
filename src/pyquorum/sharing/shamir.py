@@ -26,7 +26,7 @@ class ShamirScheme(Scheme):
         
         Returns
         -------
-        shares: Shares:
+        shares: Shares
             secret key that splitted on shares 
 
         Raises
@@ -46,7 +46,7 @@ class ShamirScheme(Scheme):
         
         Parameters
         ----------
-        shares: list[str]
+        shares: Shares
             splitted pieces of secret key
 
         Returns

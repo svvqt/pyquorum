@@ -178,67 +178,93 @@ fn solve_system(mut matrix: Vec<Vec<u128>>, mut b: Vec<u128>, p: u128) -> Result
 fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<Vec<String>, String> {
     if k < 2 || n < k { return Err("Invalid k/n".into()); }
 
-    // Секрет — это точка (x1, x2, ..., xk). 
-    // Для простоты распределим 32 байта ключа по координатам.
-    // Если k=2, разобьем на 2 по 128 бит. Если k=4, по 64 бит.
-    // Здесь мы просто дополним ключ до k координат по 127 бит.
-    let mut point = vec![0u128; k];
-    for i in 0..4 {
-        if i < k {
-            point[i] = u64::from_be_bytes(secret[i*8..(i+1)*8].try_into().unwrap()) as u128;
+    let mut rng = OsRng;
+    
+    // 1. Разбиваем секрет на 4 блока по 8 байт
+    let chunks = [
+        u64::from_be_bytes(secret[0..8].try_into().unwrap()) as u128,
+        u64::from_be_bytes(secret[8..16].try_into().unwrap()) as u128,
+        u64::from_be_bytes(secret[16..24].try_into().unwrap()) as u128,
+        u64::from_be_bytes(secret[24..32].try_into().unwrap()) as u128,
+    ];
+
+    // 2. Для каждого блока создаем фиксированную "секретную точку" в k-мерном пространстве
+    // Точка P = (chunk, r1, r2, ..., r_{k-1})
+    let mut secret_points = Vec::new();
+    for &chunk in &chunks {
+        let mut point = vec![chunk];
+        for _ in 1..k {
+            point.push((rng.next_u64() as u128 % (PRIME - 1)) + 1);
         }
+        secret_points.push(point);
     }
 
-    let mut rng = OsRng;
     let mut shares = Vec::new();
 
+    // 3. Генерируем n долей (гиперплоскостей)
     for _ in 0..n {
-        // Генерируем коэффициенты гиперплоскости: a1*x1 + a2*x2 + ... + ak*xk = d
-        let mut coeffs = vec![0u128; k];
-        let mut d = 0u128;
-        
+        // Коэффициенты a1, a2, ..., ak общие для всех 4-х блоков в рамках одной доли
+        let mut a_coeffs = vec![0u128; k];
         for i in 0..k {
-            coeffs[i] = (rng.next_u64() as u128 % (PRIME - 1)) + 1;
-            d = (d + mul_mod(coeffs[i], point[i], PRIME)) % PRIME;
+            a_coeffs[i] = (rng.next_u64() as u128 % (PRIME - 1)) + 1;
         }
 
-        // Доля: "a1,a2,...,ak:d"
-        let coeffs_str: Vec<String> = coeffs.iter().map(|c| format!("{:032x}", c)).collect();
-        shares.push(format!("{}:{:032x}", coeffs_str.join(","), d));
+        // Вычисляем d_j = A * P_j для каждого из 4-х блоков
+        let mut d_results = Vec::new();
+        for point in &secret_points {
+            let mut d = 0u128;
+            for i in 0..k {
+                d = (d + mul_mod(a_coeffs[i], point[i], PRIME)) % PRIME;
+            }
+            d_results.push(format!("{:032x}", d));
+        }
+
+        let a_str: Vec<String> = a_coeffs.iter().map(|c| format!("{:032x}", c)).collect();
+        // Результат: "a1,a2,a3:d1:d2:d3:d4"
+        shares.push(format!("{}:{}", a_str.join(","), d_results.join(":")));
     }
 
     Ok(shares)
 }
 
 fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, String> {
-    if shares.len() < k { return Err("Not enough shares".into()); }
+    if shares.len() < k { 
+        return Err(format!("Not enough shares: got {}, need {}", shares.len(), k)); 
+    }
 
     let mut a_matrix = Vec::new();
-    let mut b_vector = Vec::new();
+    let mut b_vectors = vec![Vec::new(); 4];
 
-    for s in &shares[..k] {
+    for (idx, s) in shares.iter().take(k).enumerate() {
         let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 { return Err("Invalid format".into()); }
+        // Проверка: Коэффициенты (1 часть) + 4 значения d = 5 частей
+        if parts.len() != 5 { 
+            return Err(format!("Share {} has invalid format: expected 5 parts, got {}", idx, parts.len())); 
+        }
         
         let coeffs: Vec<u128> = parts[0].split(',')
-            .map(|c| u128::from_str_radix(c, 16).unwrap())
-            .collect();
-        let d = u128::from_str_radix(parts[1], 16).unwrap();
+            .map(|c| u128::from_str_radix(c, 16).map_err(|e| e.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        if coeffs.len() != k {
+            return Err(format!("Share {} has invalid number of coefficients: expected {}, got {}", idx, k, coeffs.len()));
+        }
 
         a_matrix.push(coeffs);
-        b_vector.push(d);
-    }
-
-    let result_point = solve_system(a_matrix, b_vector, PRIME)?;
-    
-    let mut key = [0u8; KEY_LEN];
-    for i in 0..4 {
-        if i < result_point.len() {
-            key[i*8..(i+1)*8].copy_from_slice(&(result_point[i] as u64).to_be_bytes());
+        for i in 0..4 {
+            let d = u128::from_str_radix(parts[i+1], 16).map_err(|e| e.to_string())?;
+            b_vectors[i].push(d);
         }
     }
+
+    let mut final_key = [0u8; KEY_LEN];
+    for i in 0..4 {
+        let solution = solve_system(a_matrix.clone(), b_vectors[i].clone(), PRIME)?;
+        // Координата x0 — это наш секретный чанк
+        final_key[i*8..(i+1)*8].copy_from_slice(&(solution[0] as u64).to_be_bytes());
+    }
     
-    Ok(SecretKey(key))
+    Ok(SecretKey(final_key))
 }
 
 // ── PyO3 bindings ─

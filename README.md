@@ -28,6 +28,12 @@ This library does:
 What it doesn't:
 - replace encryption packages like cryptography, pyserpent and etc
 
+> **WARNING** - This library is in active development (0.x.x). 
+> It has not undergone a professional security audit and contains 
+> known vulnerabilities. **Do not use in production.**
+
+You can review known vulnerabilities in [SECURITY_ISSUES_TRACKER.md](SECURITY_ISSUES_TRACKER.md)
+
 If you found a security issue, please refer to [SECURITY.md](SECURITY.md)
 
 ## Roadmap to v1.0.0

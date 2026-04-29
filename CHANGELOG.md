@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] - 2026-04-29
+
+### Fixed
+- Timing leak in modular multiplication (mul_mod)
+
 ## [0.2.0] - 2026-04-24
 
 ### Added

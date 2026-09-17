@@ -3,10 +3,11 @@ from .shares import Shares
 from ..exceptions import InvalidKeyError, InvalidShareError
 from pyquorum import pyquorum_core
 
+
 class BlakleyScheme(Scheme):
     """
     Class for Blakley secret sharing
-    
+
     Parameters
     ----------
     k: int
@@ -14,7 +15,7 @@ class BlakleyScheme(Scheme):
     n: int
         total number of shares to generate
     """
-    def split(self, key:bytes) -> Shares:
+    def split(self, key: bytes) -> Shares:
         """
         method for splitting secret key to number of shares
 
@@ -22,7 +23,7 @@ class BlakleyScheme(Scheme):
         ----------
         key: bytes
             secret key
-        
+
         Returns
         -------
         shares: Shares
@@ -42,7 +43,7 @@ class BlakleyScheme(Scheme):
     def combine(self, shares: Shares) -> bytes:
         """
         combine shares to secret key
-        
+
         Parameters
         ----------
         shares: Shares

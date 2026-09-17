@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] - 2026-x-x
+
+### Added
+
+- HKDF - `def hkdf(skm, length, salt, CTXInfo)`
+
 ## [0.2.1] - 2026-04-29
 
 ### Fixed

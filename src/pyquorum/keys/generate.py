@@ -1,9 +1,10 @@
 from pyquorum import pyquorum_core
 from ..exceptions import GenerateKeyError
 
+
 def generate_key() -> bytes:
     """Generate a random secret key
-    
+
     Returns
     --------
     bytes:

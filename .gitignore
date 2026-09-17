@@ -9,6 +9,7 @@ dist/
 *.egg-info/
 .pytest_cache
 main.py
+env
 
 # Rust
 target/

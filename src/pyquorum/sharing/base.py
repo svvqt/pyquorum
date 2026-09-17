@@ -15,10 +15,9 @@ class Scheme(ABC):
         """Разделение ключа"""
         if not isinstance(key, bytes):
             raise InvalidKeyError(f"Key must be bytes, not {type(key)}")
-        
+
         if len(key) != 32:
             raise InvalidKeyError(f"Key length must be 32, not {len(key)}")
-
 
     @abstractmethod
     def combine(self, shares: Shares) -> bytes:

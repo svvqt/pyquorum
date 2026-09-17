@@ -40,7 +40,7 @@ If you found a security issue, please refer to [SECURITY.md](SECURITY.md)
 - [x] - Shamir Scheme
 - [x] - Blakley Scheme
 - [ ] - Additive Scheme
-- [ ] - HKDF Key Derivation
+- [x] - HKDF Key Derivation
 - [ ] - Threshold ECDSA
 
 ## Support

@@ -39,7 +39,7 @@ If you found a security issue, please refer to [SECURITY.md](SECURITY.md)
 ## Roadmap to v1.0.0
 - [x] - Shamir Scheme
 - [x] - Blakley Scheme
-- [ ] - Additive Scheme
+- [x] - Additive Scheme
 - [x] - HKDF Key Derivation
 - [ ] - Threshold ECDSA
 

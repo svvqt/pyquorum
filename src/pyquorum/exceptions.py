@@ -11,11 +11,14 @@ class InvalidShareError(PyQuorumError):
 
 
 class ThresholdError(PyQuorumError):
-    def __init__(self, k, n):
+    def __init__(self, k, n, message=None):
         self.k = k
         self.n = n
+        self.message = message
 
     def __str__(self):
+        if self.message:
+            return self.message
         return f"K must be less then N, now k={self.k}, n={self.n}"
 
 

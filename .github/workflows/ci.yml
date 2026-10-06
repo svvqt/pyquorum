@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: cargo fmt
+        working-directory: src/rust
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: src/rust
+        run: cargo clippy --release --all-targets -- -D warnings
+
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        run: python -m pip install 'pytest>=8,<9'
+
+      - name: Build and install pyquorum
+        run: python -m pip install .
+
+      - name: Run the test suite
+        run: python -m pytest tests -q

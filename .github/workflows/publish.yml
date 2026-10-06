@@ -1,17 +1,40 @@
-name: Publish to PyPI
+name: Publish
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Where to publish the built artifacts
+        type: choice
+        options:
+          - testpypi
+          - pypi
+        default: testpypi
 
 jobs:
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+
   build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            manylinux: manylinux_2_28
+            target: ''
+          - os: windows-latest
+            manylinux: auto
+            target: ''
+          - os: macos-latest
+            manylinux: auto
+            target: universal2-apple-darwin
 
     steps:
       - uses: actions/checkout@v4
@@ -22,13 +45,27 @@ jobs:
           python-version: '3.12'
 
       - name: Build wheels
+        if: matrix.target == ''
         uses: PyO3/maturin-action@v1
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         with:
           command: build
           args: --release --out dist
-          manylinux: ${{ matrix.os == 'ubuntu-latest' && 'manylinux_2_28' || 'auto' }}
+          manylinux: ${{ matrix.manylinux }}
+
+      - name: Add the macOS targets for a universal2 wheel
+        if: matrix.target != ''
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Build a universal2 wheel
+        if: matrix.target != ''
+        uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+        with:
+          command: build
+          args: --release --out dist --target ${{ matrix.target }}
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -37,15 +74,17 @@ jobs:
           path: dist
 
   build_sdist:
-    name: Build source distribution
+    name: Source distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
+
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
@@ -53,12 +92,22 @@ jobs:
           path: dist
 
   publish:
-    name: Publish to PyPI
-    needs: [build_wheels, build_sdist]
+    name: Publish
+    needs: [checks, build_wheels, build_sdist]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(python3 -c 'import pathlib,tomllib;print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "tag=$TAG package=$VERSION"
+          test "$TAG" = "$VERSION"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -66,5 +115,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@v1.14.2
+        with:
+          repository-url: ${{ inputs.repository == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}

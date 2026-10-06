@@ -1,9 +1,8 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use rand::rngs::OsRng;
 use rand::RngCore;
-use lazy_static::lazy_static;
+use rand::rngs::OsRng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // ── Константы ─────────────────────────────────────────────────────────────
@@ -12,8 +11,6 @@ const PRIME: u128 = (1u128 << 127) - 1;
 const KEY_LEN: usize = 32;
 /// Верхняя граница n: защита от неограниченного выделения памяти в split.
 const MAX_SHARES: usize = 1 << 20;
-const P_PRIME:   u128 = 0x8000_0000_0000_0000_0000_0000_0000_0001;
-const R2_MOD_P:  u128 = 4;
 
 // ── Защищённый тип ────────────────────────────────────────────────────────
 
@@ -36,7 +33,7 @@ fn widening_mul(a: u128, b: u128) -> (u128, u128) {
     let hh = a_hi * b_hi;
 
     let (mid, mid_carry) = lh.overflowing_add(hl);
-    let (lo, lo_carry)   = ll.overflowing_add(mid << 64);
+    let (lo, lo_carry) = ll.overflowing_add(mid << 64);
 
     let hi = hh
         .wrapping_add(mid >> 64)
@@ -47,7 +44,7 @@ fn widening_mul(a: u128, b: u128) -> (u128, u128) {
 
 // REDC: вход T = t_hi*2^128 + t_lo < p*R, выход T*R^{-1} mod p.
 const MASK127: u128 = (1u128 << 127) - 1;
- 
+
 #[inline(always)]
 fn mersenne_reduce(t_lo: u128, t_hi: u128) -> u128 {
     // Шаг 1: A = T >> 127, B = T mod 2^127
@@ -56,23 +53,23 @@ fn mersenne_reduce(t_lo: u128, t_hi: u128) -> u128 {
     // поэтому t_hi << 1 не переполняет u128.
     let b = t_lo & MASK127;
     let a = (t_lo >> 127) | (t_hi << 1); // a < p, влезает в u128
- 
+
     // Шаг 2: первая редукция; a + b < p + 2^127 = 2^128 - 1 ≤ u128::MAX
     let r = a + b;
- 
+
     // Шаг 3: вторая редукция; r >> 127 ∈ {0, 1}
     let r = (r & MASK127) + (r >> 127);
- 
+
     // Шаг 4: CT финальная вычитка (r < 2p после шага 3)
     let (r2, borrow) = r.overflowing_sub(PRIME);
     let mask = (borrow as u128).wrapping_neg(); // 0x00..00 или 0xFF..FF
     (r & mask) | (r2 & !mask)
 }
- 
+
 // ── Публичный интерфейс: умножение по модулю ──────────────────────────────
 //
 // Заменяет старый mul_mod, сигнатура идентична — остальной код не трогаем.
- 
+
 #[inline]
 fn mul_mod(a: u128, b: u128) -> u128 {
     let (lo, hi) = widening_mul(a, b);
@@ -138,7 +135,9 @@ fn parse_field(s: &str, what: &str) -> Result<u128, String> {
 /// Ограничение диапазона закрывает дубликаты вроде "1" и "01",
 /// а также x >= 2^127, которые ломают контракт mul_mod.
 fn parse_index(s: &str) -> Result<u128, String> {
-    let x = s.parse::<u128>().map_err(|_| format!("Invalid share index: {}", s))?;
+    let x = s
+        .parse::<u128>()
+        .map_err(|_| format!("Invalid share index: {}", s))?;
     if x >= PRIME {
         return Err(format!("Invalid share index: {} must be < 2^127-1", x));
     }
@@ -147,7 +146,11 @@ fn parse_index(s: &str) -> Result<u128, String> {
 
 // ── Shamir's Secret Sharing ──────────────────
 
-fn shamir_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<Vec<String>, String> {
+fn shamir_split_internal(
+    secret: &[u8; KEY_LEN],
+    k: usize,
+    n: usize,
+) -> Result<Vec<String>, String> {
     if k < 2 || n < k {
         return Err("Invalid k/n parameters".into());
     }
@@ -209,7 +212,9 @@ fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, Str
     let mut parsed: Vec<(u128, [u128; 4])> = Vec::with_capacity(k);
     for s in &shares[..k] {
         let p: Vec<&str> = s.split(':').collect();
-        if p.len() != 5 { return Err("Invalid format".into()); }
+        if p.len() != 5 {
+            return Err("Invalid format".into());
+        }
         let idx = parse_index(p[0])?;
         if parsed.iter().any(|(x, _)| *x == idx) {
             return Err(format!("Duplicate share index {}", idx));
@@ -229,11 +234,16 @@ fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, Str
         for i in 0..k {
             let (xi, yi) = (parsed[i].0, parsed[i].1[comp]);
             let (mut num, mut den) = (1u128, 1u128);
-            for j in 0..k {
-                if i == j { continue; }
-                let xj = parsed[j].0;
+            for (j, &(xj, _)) in parsed.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
                 num = mul_mod(num, PRIME - (xj % PRIME));
-                let diff = if xi > xj { xi - xj } else { PRIME - (xj - xi) % PRIME };
+                let diff = if xi > xj {
+                    xi - xj
+                } else {
+                    PRIME - (xj - xi) % PRIME
+                };
                 den = mul_mod(den, diff);
             }
             let li = mul_mod(num, mod_inv(den, PRIME)?);
@@ -248,25 +258,38 @@ fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, Str
 // ── Линейная алгебра в GF(p) ─────────────────────────────────────────────
 
 /// Решает систему Ax = B методом Гаусса в поле GF(p)
-fn solve_system(mut matrix: Vec<Vec<u128>>, mut b: Vec<u128>, p: u128) -> Result<Vec<u128>, String> {
+fn solve_system(
+    mut matrix: Vec<Vec<u128>>,
+    mut b: Vec<u128>,
+    p: u128,
+) -> Result<Vec<u128>, String> {
     let n = matrix.len();
 
     for i in 0..n {
         // Поиск опорного элемента
         let mut pivot = i;
-        while pivot < n && matrix[pivot][i] == 0 { pivot += 1; }
-        if pivot == n { return Err("System is linearly dependent".into()); }
-        
+        while pivot < n && matrix[pivot][i] == 0 {
+            pivot += 1;
+        }
+        if pivot == n {
+            return Err("System is linearly dependent".into());
+        }
+
         matrix.swap(i, pivot);
         b.swap(i, pivot);
 
         let inv = mod_inv(matrix[i][i], p)?;
-        for j in i..n { matrix[i][j] = mul_mod(matrix[i][j], inv); }
+        for value in matrix[i].iter_mut().skip(i) {
+            *value = mul_mod(*value, inv);
+        }
         b[i] = mul_mod(b[i], inv);
 
         for k in 0..n {
             if k != i {
                 let factor = matrix[k][i];
+                // Диапазон вместо итераторов: строка i читается, а строка k
+                // пишется, итераторы потребовали бы split_at_mut.
+                #[allow(clippy::needless_range_loop)]
                 for j in i..n {
                     let sub = mul_mod(factor, matrix[i][j]);
                     matrix[k][j] = (matrix[k][j] + p - sub) % p;
@@ -281,12 +304,20 @@ fn solve_system(mut matrix: Vec<Vec<u128>>, mut b: Vec<u128>, p: u128) -> Result
 
 // ── Blakley's Scheme ──────────────────────────────────────────────────────
 
-fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<Vec<String>, String> {
-    if k < 2 || n < k { return Err("Invalid k/n".into()); }
-    if n > MAX_SHARES { return Err(format!("Invalid n: must be <= {}", MAX_SHARES)); }
+fn blakley_split_internal(
+    secret: &[u8; KEY_LEN],
+    k: usize,
+    n: usize,
+) -> Result<Vec<String>, String> {
+    if k < 2 || n < k {
+        return Err("Invalid k/n".into());
+    }
+    if n > MAX_SHARES {
+        return Err(format!("Invalid n: must be <= {}", MAX_SHARES));
+    }
 
     let mut rng = OsRng;
-    
+
     // 1. Разбиваем секрет на 4 блока по 8 байт
     let chunks = [
         u64::from_be_bytes(secret[0..8].try_into().unwrap()) as u128,
@@ -314,12 +345,9 @@ fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<
     // 3. Генерируем n долей (гиперплоскостей)
     for _ in 0..n {
         // Коэффициенты a1, a2, ..., ak общие для всех 4-х блоков в рамках одной доли
-        let mut a_coeffs = vec![0u128; k];
-        for i in 0..k {
-            // Тоже полная разрядность: узкие коэффициенты ослабляют
-            // гиперплоскости и упрощают решёточную атаку.
-            a_coeffs[i] = rand_field_nonzero(&mut rng);
-        }
+        // Тоже полная разрядность: узкие коэффициенты ослабляют
+        // гиперплоскости и упрощают решёточную атаку.
+        let a_coeffs: Vec<u128> = (0..k).map(|_| rand_field_nonzero(&mut rng)).collect();
 
         // Вычисляем d_j = A * P_j для каждого из 4-х блоков
         let mut d_results = Vec::new();
@@ -340,8 +368,12 @@ fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<
 }
 
 fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, String> {
-    if shares.len() < k { 
-        return Err(format!("Not enough shares: got {}, need {}", shares.len(), k)); 
+    if shares.len() < k {
+        return Err(format!(
+            "Not enough shares: got {}, need {}",
+            shares.len(),
+            k
+        ));
     }
 
     if k < 2 {
@@ -354,16 +386,26 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
     for (idx, s) in shares.iter().take(k).enumerate() {
         let parts: Vec<&str> = s.split(':').collect();
         // Проверка: Коэффициенты (1 часть) + 4 значения d = 5 частей
-        if parts.len() != 5 { 
-            return Err(format!("Share {} has invalid format: expected 5 parts, got {}", idx, parts.len())); 
+        if parts.len() != 5 {
+            return Err(format!(
+                "Share {} has invalid format: expected 5 parts, got {}",
+                idx,
+                parts.len()
+            ));
         }
-        
-        let coeffs: Vec<u128> = parts[0].split(',')
+
+        let coeffs: Vec<u128> = parts[0]
+            .split(',')
             .map(|c| parse_field(c, "coefficient"))
             .collect::<Result<Vec<_>, _>>()?;
-        
+
         if coeffs.len() != k {
-            return Err(format!("Share {} has invalid number of coefficients: expected {}, got {}", idx, k, coeffs.len()));
+            return Err(format!(
+                "Share {} has invalid number of coefficients: expected {}, got {}",
+                idx,
+                k,
+                coeffs.len()
+            ));
         }
 
         a_matrix.push(coeffs);
@@ -377,10 +419,12 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
     for i in 0..4 {
         let solution = solve_system(a_matrix.clone(), b_vectors[i].clone(), PRIME)?;
         // Координата x0 — это наш секретный чанк
-        let chunk = *solution.first().ok_or("Degenerate system: empty solution")?;
-        final_key[i*8..(i+1)*8].copy_from_slice(&(chunk as u64).to_be_bytes());
+        let chunk = *solution
+            .first()
+            .ok_or("Degenerate system: empty solution")?;
+        final_key[i * 8..(i + 1) * 8].copy_from_slice(&(chunk as u64).to_be_bytes());
     }
-    
+
     Ok(SecretKey(final_key))
 }
 
@@ -390,9 +434,9 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
 fn generate_key(py: Python<'_>) -> PyResult<Bound<'_, PyBytes>> {
     let mut key = [0u8; KEY_LEN];
     OsRng.fill_bytes(&mut key);
-    
+
     let result = PyBytes::new(py, &key);
-    
+
     key.zeroize();
     Ok(result)
 }
@@ -402,28 +446,35 @@ fn shamir_split(secret: &[u8], k: usize, n: usize) -> PyResult<Vec<String>> {
     let key: [u8; KEY_LEN] = secret
         .try_into()
         .map_err(|_| PyValueError::new_err(format!("Secret must be {} bytes", KEY_LEN)))?;
-    
-    shamir_split_internal(&key, k, n)
-        .map_err(|e| PyValueError::new_err(e))
+
+    shamir_split_internal(&key, k, n).map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
-fn shamir_combine<'py>(py: Python<'py>, shares: Vec<String>, k: usize) -> PyResult<Bound<'py, PyBytes>> {
-    let key = shamir_combine_internal(&shares, k)
-        .map_err(|e| PyValueError::new_err(e))?;
-    
+fn shamir_combine<'py>(
+    py: Python<'py>,
+    shares: Vec<String>,
+    k: usize,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let key = shamir_combine_internal(&shares, k).map_err(PyValueError::new_err)?;
+
     Ok(PyBytes::new(py, &key.0))
 }
 
 #[pyfunction]
 fn blakley_split(secret: &[u8], k: usize, n: usize) -> PyResult<Vec<String>> {
-    let key: [u8; KEY_LEN] = secret.try_into()
+    let key: [u8; KEY_LEN] = secret
+        .try_into()
         .map_err(|_| PyValueError::new_err("Secret must be 32 bytes"))?;
     blakley_split_internal(&key, k, n).map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
-fn blakley_combine<'py>(py: Python<'py>, shares: Vec<String>, k: usize) -> PyResult<Bound<'py, PyBytes>> {
+fn blakley_combine<'py>(
+    py: Python<'py>,
+    shares: Vec<String>,
+    k: usize,
+) -> PyResult<Bound<'py, PyBytes>> {
     let key = blakley_combine_internal(&shares, k).map_err(PyValueError::new_err)?;
     Ok(PyBytes::new(py, &key.0))
 }
@@ -433,7 +484,7 @@ fn pyquorum_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_key, m)?)?;
     m.add_function(wrap_pyfunction!(shamir_split, m)?)?;
     m.add_function(wrap_pyfunction!(shamir_combine, m)?)?;
-    m.add_function(wrap_pyfunction!(blakley_split,m)?)?;
-    m.add_function(wrap_pyfunction!(blakley_combine,m)?)?;
+    m.add_function(wrap_pyfunction!(blakley_split, m)?)?;
+    m.add_function(wrap_pyfunction!(blakley_combine, m)?)?;
     Ok(())
 }

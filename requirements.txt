@@ -1,0 +1,7 @@
+# Runtime dependencies of pyquorum.
+#
+# There are none: the package is a Rust extension module built with maturin and
+# the Python layer (sharing schemes, Shares, hkdf) uses only the standard
+# library. See [project] dependencies = [] in pyproject.toml.
+#
+# Development and test dependencies live in requirements-dev.txt.

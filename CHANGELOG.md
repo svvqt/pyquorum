@@ -1,18 +1,16 @@
 # Changelog
 
-## [0.3.0] - 2026-x-x
+## [0.3.0] - 2026-10-06
 
 ### Added
 
-- HKDF - `def hkdf(skm, length, salt, CTXInfo)`
+- HKDF - `def hkdf(ikm, length, salt, info)`
 - Additive Scheme - `Class AdditiveScheme`
 
 ### Fixed
 
 - Rust core: Blakley scheme was broken for k >= 3 (LLL recovered the key from k-1 shares), see SECURITY_ISSUES_TRACKER.md
 - Rust core: share fields are validated (range, format, duplicate index) - no silently wrong or all-zero keys, no panic on k = 0
-- HKDF now follows RFC 5869 (T(0) is the empty string, output length is validated) and passes its SHA-256 test vectors
-- Additive Scheme: shares are xor-ed in GF(2^256) instead of added modulo 2^127+1, so combine(split(key)) returns the key
 
 ## [0.2.1] - 2026-04-29
 

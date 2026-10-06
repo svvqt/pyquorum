@@ -1,0 +1,20 @@
+# Development and test dependencies.
+#
+#   pip install -r requirements-dev.txt
+#   python -m pytest tests
+#
+# Tests import pyquorum from src/ (see pythonpath in pyproject.toml), so the
+# Rust core has to be built first:
+#
+#   maturin develop --release
+# or
+#   cd src/rust && cargo build --release
+#   copy target/release/pyquorum_core.dll to src/pyquorum/pyquorum_core.pyd
+#
+# Versions are pinned to the environment the suite was verified in:
+# Python 3.13.4, pytest 8.4.2, maturin 1.13.1 (102 passed).
+
+-r requirements.txt
+
+pytest==8.4.2
+maturin==1.13.1

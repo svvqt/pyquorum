@@ -10,6 +10,16 @@ class InvalidShareError(PyQuorumError):
     pass
 
 
+class InvalidLengthError(PyQuorumError, ValueError):
+    """Raised when a length argument is outside the allowed range.
+
+    Inherits from ValueError too, so callers that catch plain ValueError
+    (and idiomatic Python code) keep working.
+    """
+
+    pass
+
+
 class ThresholdError(PyQuorumError):
     def __init__(self, k, n, message=None):
         self.k = k

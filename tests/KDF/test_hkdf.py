@@ -16,6 +16,7 @@ if __name__ == "__main__":  # direct run: make `pyquorum` importable from src/
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src"))
 
 from pyquorum import generate_key, hkdf
+from pyquorum.exceptions import InvalidLengthError, PyQuorumError
 
 # (name, IKM, salt, info, L, OKM) from RFC 5869 appendix A.1-A.3, SHA-256
 RFC5869_SHA256 = (
@@ -77,7 +78,25 @@ def test_length_bounds():
     for length in (1, 31, 32, 33, 100, 255 * 32):
         assert len(hkdf(key, length)) == length
     for length in (0, -1, 255 * 32 + 1):
-        _expect(ValueError, lambda value=length: hkdf(key, value))
+        _expect(InvalidLengthError, lambda value=length: hkdf(key, value))
+
+
+def test_length_error_is_both_a_pyquorum_error_and_a_value_error():
+    try:
+        hkdf(generate_key(), 0)
+    except InvalidLengthError as error:
+        assert isinstance(error, PyQuorumError)
+        assert isinstance(error, ValueError)
+    else:
+        raise AssertionError("InvalidLengthError was not raised")
+
+
+def test_public_parameter_names():
+    """The public names are the RFC 5869 ones: ikm / length / salt / info."""
+    key = bytes.fromhex("0b" * 22)
+    assert hkdf(ikm=key, length=42) == hkdf(key, 42)
+    assert hkdf(key, 42, salt=b"salt", info=b"info") == hkdf(key, 42, b"salt", b"info")
+    assert hkdf(ikm=key, length=42, salt=None, info=None) == hkdf(key, 42)
 
 
 def test_types_are_checked():

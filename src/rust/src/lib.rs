@@ -10,6 +10,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const PRIME: u128 = (1u128 << 127) - 1;
 const KEY_LEN: usize = 32;
+/// Верхняя граница n: защита от неограниченного выделения памяти в split.
+const MAX_SHARES: usize = 1 << 20;
 const P_PRIME:   u128 = 0x8000_0000_0000_0000_0000_0000_0000_0001;
 const R2_MOD_P:  u128 = 4;
 
@@ -90,8 +92,57 @@ fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
     result
 }
 
-fn mod_inv(a: u128, p: u128) -> u128 {
-    mod_pow(a, p - 2, p)
+/// Обратный элемент в GF(p). Ноль обратного не имеет: это ошибка,
+/// а не тихий 0 (иначе combine возвращал бы нулевой ключ).
+fn mod_inv(a: u128, p: u128) -> Result<u128, String> {
+    // a^(p-2) == 0 тогда и только тогда, когда a == 0: для a != 0 это a^{-1}.
+    let inv = mod_pow(a, p - 2, p);
+    if inv == 0 {
+        return Err("Zero denominator in GF(p): invalid or duplicate share".into());
+    }
+    Ok(inv)
+}
+
+/// Равномерное ненулевое значение в GF(p).
+///
+/// hi маскируется до 63 бит, поэтому v < 2^127 = p + 1; отбрасывание
+/// v == 0 и v == p даёт строго равномерное распределение на [1, p-1].
+/// Полная разрядность обязательна: 64-битные значения делают секретную
+/// точку Blakley коротким вектором решётки (LLL восстанавливает ключ).
+#[inline]
+fn rand_field_nonzero(rng: &mut impl RngCore) -> u128 {
+    loop {
+        let lo = rng.next_u64() as u128;
+        let hi = (rng.next_u64() as u128) & 0x7FFF_FFFF_FFFF_FFFF;
+        let v = (hi << 64) | lo;
+        if v != 0 && v < PRIME {
+            return v;
+        }
+    }
+}
+
+/// Разбирает hex-поле доли: ровно 32 символа и значение < p.
+/// Значения >= p ломают контракт mul_mod (он верен только для a, b < 2^127).
+fn parse_field(s: &str, what: &str) -> Result<u128, String> {
+    if s.len() != 32 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("Invalid {}: expected exactly 32 hex chars", what));
+    }
+    let v = u128::from_str_radix(s, 16).map_err(|_| format!("Invalid {}: {}", what, s))?;
+    if v >= PRIME {
+        return Err(format!("Invalid {}: value must be < 2^127-1", what));
+    }
+    Ok(v)
+}
+
+/// Индекс доли: десятичное число < p.
+/// Ограничение диапазона закрывает дубликаты вроде "1" и "01",
+/// а также x >= 2^127, которые ломают контракт mul_mod.
+fn parse_index(s: &str) -> Result<u128, String> {
+    let x = s.parse::<u128>().map_err(|_| format!("Invalid share index: {}", s))?;
+    if x >= PRIME {
+        return Err(format!("Invalid share index: {} must be < 2^127-1", x));
+    }
+    Ok(x)
 }
 
 // ── Shamir's Secret Sharing ──────────────────
@@ -99,6 +150,9 @@ fn mod_inv(a: u128, p: u128) -> u128 {
 fn shamir_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<Vec<String>, String> {
     if k < 2 || n < k {
         return Err("Invalid k/n parameters".into());
+    }
+    if n > MAX_SHARES {
+        return Err(format!("Invalid n: must be <= {}", MAX_SHARES));
     }
 
     let secrets = [
@@ -145,20 +199,26 @@ fn shamir_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<V
 }
 
 fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, String> {
+    if k < 2 {
+        return Err("Invalid k: threshold must be at least 2".into());
+    }
     if shares.len() < k {
         return Err(format!("Need at least {} shares", k));
     }
 
-    let mut parsed = Vec::with_capacity(k);
+    let mut parsed: Vec<(u128, [u128; 4])> = Vec::with_capacity(k);
     for s in &shares[..k] {
         let p: Vec<&str> = s.split(':').collect();
         if p.len() != 5 { return Err("Invalid format".into()); }
-        let idx = p[0].parse::<u128>().map_err(|e| e.to_string())?;
+        let idx = parse_index(p[0])?;
+        if parsed.iter().any(|(x, _)| *x == idx) {
+            return Err(format!("Duplicate share index {}", idx));
+        }
         let vals = [
-            u128::from_str_radix(p[1], 16).map_err(|e| e.to_string())?,
-            u128::from_str_radix(p[2], 16).map_err(|e| e.to_string())?,
-            u128::from_str_radix(p[3], 16).map_err(|e| e.to_string())?,
-            u128::from_str_radix(p[4], 16).map_err(|e| e.to_string())?,
+            parse_field(p[1], "share value")?,
+            parse_field(p[2], "share value")?,
+            parse_field(p[3], "share value")?,
+            parse_field(p[4], "share value")?,
         ];
         parsed.push((idx, vals));
     }
@@ -176,7 +236,7 @@ fn shamir_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, Str
                 let diff = if xi > xj { xi - xj } else { PRIME - (xj - xi) % PRIME };
                 den = mul_mod(den, diff);
             }
-            let li = mul_mod(num, mod_inv(den, PRIME));
+            let li = mul_mod(num, mod_inv(den, PRIME)?);
             result = (result + mul_mod(yi, li)) % PRIME;
         }
         key_bytes[comp * 8..(comp + 1) * 8].copy_from_slice(&(result as u64).to_be_bytes());
@@ -200,7 +260,7 @@ fn solve_system(mut matrix: Vec<Vec<u128>>, mut b: Vec<u128>, p: u128) -> Result
         matrix.swap(i, pivot);
         b.swap(i, pivot);
 
-        let inv = mod_inv(matrix[i][i], p);
+        let inv = mod_inv(matrix[i][i], p)?;
         for j in i..n { matrix[i][j] = mul_mod(matrix[i][j], inv); }
         b[i] = mul_mod(b[i], inv);
 
@@ -223,6 +283,7 @@ fn solve_system(mut matrix: Vec<Vec<u128>>, mut b: Vec<u128>, p: u128) -> Result
 
 fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<Vec<String>, String> {
     if k < 2 || n < k { return Err("Invalid k/n".into()); }
+    if n > MAX_SHARES { return Err(format!("Invalid n: must be <= {}", MAX_SHARES)); }
 
     let mut rng = OsRng;
     
@@ -240,7 +301,10 @@ fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<
     for &chunk in &chunks {
         let mut point = vec![chunk];
         for _ in 1..k {
-            point.push((rng.next_u64() as u128 % (PRIME - 1)) + 1);
+            // Полноразрядные координаты обязательны: при 64-битных значениях
+            // секретная точка становится коротким вектором решётки, и LLL
+            // восстанавливает ключ по k-1 долям.
+            point.push(rand_field_nonzero(&mut rng));
         }
         secret_points.push(point);
     }
@@ -252,7 +316,9 @@ fn blakley_split_internal(secret: &[u8; KEY_LEN], k: usize, n: usize) -> Result<
         // Коэффициенты a1, a2, ..., ak общие для всех 4-х блоков в рамках одной доли
         let mut a_coeffs = vec![0u128; k];
         for i in 0..k {
-            a_coeffs[i] = (rng.next_u64() as u128 % (PRIME - 1)) + 1;
+            // Тоже полная разрядность: узкие коэффициенты ослабляют
+            // гиперплоскости и упрощают решёточную атаку.
+            a_coeffs[i] = rand_field_nonzero(&mut rng);
         }
 
         // Вычисляем d_j = A * P_j для каждого из 4-х блоков
@@ -278,6 +344,10 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
         return Err(format!("Not enough shares: got {}, need {}", shares.len(), k)); 
     }
 
+    if k < 2 {
+        return Err("Invalid k: threshold must be at least 2".into());
+    }
+
     let mut a_matrix = Vec::new();
     let mut b_vectors = vec![Vec::new(); 4];
 
@@ -289,7 +359,7 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
         }
         
         let coeffs: Vec<u128> = parts[0].split(',')
-            .map(|c| u128::from_str_radix(c, 16).map_err(|e| e.to_string()))
+            .map(|c| parse_field(c, "coefficient"))
             .collect::<Result<Vec<_>, _>>()?;
         
         if coeffs.len() != k {
@@ -298,7 +368,7 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
 
         a_matrix.push(coeffs);
         for i in 0..4 {
-            let d = u128::from_str_radix(parts[i+1], 16).map_err(|e| e.to_string())?;
+            let d = parse_field(parts[i + 1], "share value")?;
             b_vectors[i].push(d);
         }
     }
@@ -307,7 +377,8 @@ fn blakley_combine_internal(shares: &[String], k: usize) -> Result<SecretKey, St
     for i in 0..4 {
         let solution = solve_system(a_matrix.clone(), b_vectors[i].clone(), PRIME)?;
         // Координата x0 — это наш секретный чанк
-        final_key[i*8..(i+1)*8].copy_from_slice(&(solution[0] as u64).to_be_bytes());
+        let chunk = *solution.first().ok_or("Degenerate system: empty solution")?;
+        final_key[i*8..(i+1)*8].copy_from_slice(&(chunk as u64).to_be_bytes());
     }
     
     Ok(SecretKey(final_key))
